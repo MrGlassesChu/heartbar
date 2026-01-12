@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>春節心情小酒館</title>
+    
+    <!-- 樣式庫 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 字型 -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@400;700&family=Zen+Maru+Gothic:wght@400;700&display=swap" rel="stylesheet">
+    
+    <!-- 全域樣式 -->
+    <style>
+      body { font-family: 'Zen Maru Gothic', sans-serif; }
+      h1, h2, h3, .serif { font-family: 'Noto Serif TC', serif; }
+      .glass-panel {
+        background: rgba(40, 10, 10, 0.6);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid rgba(255, 215, 0, 0.2);
+      }
+      textarea::-webkit-scrollbar { width: 8px; }
+      textarea::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); }
+      textarea::-webkit-scrollbar-thumb { background: rgba(255, 215, 0, 0.3); border-radius: 4px; }
+      @keyframes float {
+        0% { transform: translateY(0px); }
+        50% { transform: translateY(-10px); }
+        100% { transform: translateY(0px); }
+      }
+      .animate-float { animation: float 6s ease-in-out infinite; }
+    </style>
+
+    <!-- Import Map -->
+    <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.2.0",
+        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+        "@google/genai": "https://esm.sh/@google/genai@0.2.1"
+      }
+    }
+    </script>
+    
+    <!-- Babel Standalone -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-black text-white">
+    
+    <!-- 安全性檢查腳本：如果使用者直接雙擊打開 (file://)，顯示友善提示 -->
+    <script>
+      if (window.location.protocol === 'file:') {
+         document.body.innerHTML = `
+           <div style="display:flex;height:100vh;align-items:center;justify-content:center;background:linear-gradient(to bottom right, #1a0505, #000);color:#fcd34d;font-family:sans-serif;flex-direction:column;text-align:center;padding:20px;">
+             <h1 style="font-size:3rem;margin-bottom:20px;">⚠️ 無法直接開啟</h1>
+             <p style="color:#fca5a5;font-size:1.2rem;max-width:600px;line-height:1.6;">
+               基於瀏覽器安全限制 (CORS)，此程式無法直接在電腦資料夾中雙擊執行。<br/>
+               它需要「伺服器環境」才能載入 AI 功能。
+             </p>
+             <div style="margin-top:40px;padding:30px;background:rgba(255,255,255,0.05);border:1px solid #78350f;border-radius:16px;text-align:left;max-width:500px;width:100%;">
+               <p style="color:#fff;font-weight:bold;margin-bottom:15px;font-size:1.1rem;">如何正常使用？</p>
+               <ol style="margin-left:20px;line-height:2;color:#e5e5e5;">
+                 <li><strong>方法 A (分享給朋友)：</strong><br/>將此檔案改名為 index.html 並上傳至 <strong>GitHub Pages</strong>，即可正常運作。</li>
+                 <li><strong>方法 B (自己測試)：</strong><br/>使用 VS Code 的 <strong>Live Server</strong> 功能預覽。</li>
+               </ol>
+             </div>
+           </div>
+         `;
+         // 停止執行後續 React 腳本
+         throw new Error("Blocked by file protocol safety check");
+      }
+    </script>
+
+    <div id="root"></div>
+
+    <!-- 主程式邏輯 -->
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
+        import ReactDOM from 'react-dom/client';
+        import { GoogleGenAI } from "@google/genai";
+
+        // --- 服務層 (Service) ---
+        
+        // ==========================================
+        // ▼▼▼ 請在下方填入您的 API KEY ▼▼▼
+        // ==========================================
+        
+        // 如果您填入 Key，朋友打開網頁就能直接玩，不用輸入密碼。
+        // 例如: const HARDCODED_KEY = "AIzaSyDxxxxxxxx...";
+        
+        const HARDCODED_KEY = "AIzaSyAIiCT-EzTGQ7nbt8TlEOYl6tQSxetE-J0"; 
+
+        // ==========================================
+        // ▲▲▲ 填寫完畢請存檔 ▲▲▲
+        // ==========================================
+
+        const SYSTEM_INSTRUCTION = `
+        你是「春節心情小酒館」的 AI 調酒師。
+        你的任務是根據客人的心情，設計一款「特調飲品 (Mocktail/Creative Drink)」，並寫下一段溫暖的話。
+        【指令】
+        1. 請回傳純 JSON 格式。
+        2. 不要使用 Markdown 代碼區塊。
+        3. 飲品設計請充滿創意與美感。
+        JSON 格式範例：
+        {
+          "name": "飲品名稱",
+          "description": "50字以內的口感與外觀描述",
+          "ingredients": ["材料1", "材料2"],
+          "quote": "80字以內的暖心小語",
+          "visualPrompt": "Photorealistic beverage photography, cinematic lighting, [描述飲品], 8k resolution"
+        }
+        `;
+
+        const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+        async function retryOperation(operation, retries = 3, baseWait = 2000) {
+            let lastError;
+            for (let attempt = 0; attempt < retries; attempt++) {
+                try {
+                    return await operation();
+                } catch (error) {
+                    lastError = error;
+                    const msg = error.message || '';
+                    if (msg.includes('429') || msg.includes('quota')) {
+                        const waitTime = baseWait * Math.pow(2, attempt);
+                        console.warn(`API Busy. Retrying in ${waitTime}ms...`);
+                        await delay(waitTime);
+                        continue;
+                    }
+                    throw error;
+                }
+            }
+            throw lastError;
+        }
+
+        const generateCocktailRecipe = async (apiKey, userMood) => {
+            const ai = new GoogleGenAI({ apiKey: apiKey });
+            return retryOperation(async () => {
+                const response = await ai.models.generateContent({
+                    model: "gemini-3-flash-preview",
+                    contents: `客人的心情是：${userMood}`,
+                    config: { systemInstruction: SYSTEM_INSTRUCTION, responseMimeType: "application/json" }
+                });
+                
+                let cleanText = response.text.replace(/```json/g, '').replace(/```/g, '');
+                const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
+                if (jsonMatch) cleanText = jsonMatch[0];
+                return JSON.parse(cleanText);
+            }, 3, 2000);
+        };
+
+        const generateCocktailImage = async (apiKey, visualPrompt) => {
+            const ai = new GoogleGenAI({ apiKey: apiKey });
+            try {
+                return await retryOperation(async () => {
+                    const response = await ai.models.generateContent({
+                        model: "gemini-2.5-flash-image",
+                        contents: { parts: [{ text: `${visualPrompt}, non-alcoholic, artistic beverage photography, cozy atmosphere` }] },
+                        config: { imageConfig: { aspectRatio: "1:1" } }
+                    });
+                    
+                    for (const part of response.candidates[0].content.parts) {
+                        if (part.inlineData) return `data:image/png;base64,${part.inlineData.data}`;
+                    }
+                    throw new Error("No image");
+                }, 2, 4000);
+            } catch (e) {
+                console.warn("Image gen failed", e);
+                return "FALLBACK";
+            }
+        };
+
+        // --- 元件 (Components) ---
+
+        const AudioPlayer = forwardRef((props, ref) => {
+            const [isPlaying, setIsPlaying] = useState(false);
+            const audioRef = useRef(null);
+            
+            useImperativeHandle(ref, () => ({
+                playMusic: () => {
+                    if(audioRef.current) audioRef.current.play().then(() => setIsPlaying(true)).catch(e=>console.warn(e));
+                }
+            }));
+
+            const toggle = () => {
+                if (isPlaying) audioRef.current.pause();
+                else audioRef.current.play();
+                setIsPlaying(!isPlaying);
+            };
+
+            useEffect(() => { if(audioRef.current) audioRef.current.volume = 0.5; }, []);
+
+            return (
+                <div className="fixed top-4 right-4 z-50">
+                    <audio ref={audioRef} src="https://cdn.pixabay.com/audio/2022/11/22/audio_febc508520.mp3" loop />
+                    <button onClick={toggle} className="glass-panel text-amber-400 p-3 rounded-full hover:bg-red-900/50 transition-all border border-amber-400/30">
+                        {isPlaying ? (
+                          <div className="flex space-x-1 items-end h-4 w-4 justify-center">
+                             <div className="w-1 h-2 bg-amber-400 animate-pulse"></div>
+                             <div className="w-1 h-4 bg-amber-400 animate-pulse delay-75"></div>
+                             <div className="w-1 h-3 bg-amber-400 animate-pulse delay-150"></div>
+                          </div>
+                        ) : "🔇"}
+                    </button>
+                </div>
+            );
+        });
+
+        const LoadingScreen = ({ status }) => (
+            <div className="flex flex-col items-center justify-center min-h-[300px] text-amber-100 space-y-8 animate-pulse">
+                <div className="text-6xl animate-bounce text-amber-400 opacity-80">{status === 'analyzing' ? '🥂' : '🍸'}</div>
+                <div className="text-center space-y-2">
+                    <h3 className="text-2xl font-serif text-amber-300">{status === 'analyzing' ? '正在細讀您的心事...' : '正在為您調製專屬特調...'}</h3>
+                    <p className="text-red-200/60 font-light text-sm">{status === 'analyzing' ? '酒保正在思考最適合您的風味' : '加入一點春節的喜氣與希望'}</p>
+                </div>
+            </div>
+        );
+
+        const ResultCard = ({ recipe, imageUrl, onReset }) => {
+            const isFallback = imageUrl === "FALLBACK";
+            return (
+                <div className="w-full max-w-4xl mx-auto animate-float">
+                    <div className="glass-panel rounded-2xl overflow-hidden shadow-2xl shadow-red-900/50 flex flex-col md:flex-row">
+                        <div className="w-full md:w-1/2 relative min-h-[300px] md:min-h-[500px] bg-black">
+                            {isFallback ? (
+                                <div className="absolute inset-0 flex items-center justify-center text-6xl">🍷</div>
+                            ) : (
+                                <img src={imageUrl} alt={recipe.name} className="absolute inset-0 w-full h-full object-cover" />
+                            )}
+                            <div className="absolute inset-0 bg-gradient-to-t from-red-950/90 to-transparent md:bg-gradient-to-r" />
+                        </div>
+                        <div className="w-full md:w-1/2 p-8 md:p-12 flex flex-col justify-center text-left space-y-6 relative">
+                            <div className="absolute top-4 right-4 text-amber-500/20 text-6xl font-serif pointer-events-none">福</div>
+                            <h2 className="text-4xl md:text-5xl font-serif text-amber-400 leading-tight">{recipe.name}</h2>
+                            <p className="text-red-100/80 italic border-l-2 border-amber-600/50 pl-4">{recipe.description}</p>
+                            <div className="space-y-2">
+                                <h4 className="text-amber-500 text-sm font-bold uppercase">配方 Ingredients</h4>
+                                <ul className="flex flex-wrap gap-2">
+                                    {recipe.ingredients.map((ing, idx) => <li key={idx} className="text-xs bg-red-900/40 text-red-200 px-3 py-1 rounded-full border border-red-700/30">{ing}</li>)}
+                                </ul>
+                            </div>
+                            <div className="bg-red-950/40 p-6 rounded-xl border border-amber-500/10 mt-4 relative">
+                                <p className="text-amber-100/90 font-serif text-lg leading-loose relative z-10 text-justify">“ {recipe.quote} ”</p>
+                            </div>
+                            <button onClick={onReset} className="px-8 py-3 bg-gradient-to-r from-amber-700 to-amber-600 text-amber-100 rounded-full hover:from-amber-600 hover:to-amber-500 transition-all shadow-lg font-bold">再來一杯</button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const KeyInputModal = ({ onSave }) => {
+            const [input, setInput] = useState('');
+            
+            const handleConfirm = () => {
+                if (input.length > 5) {
+                    onSave(input);
+                }
+            };
+
+            return (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+                    <div className="glass-panel p-8 rounded-2xl max-w-md w-full text-center space-y-6 border border-amber-500/30">
+                        <h3 className="text-2xl font-serif text-amber-400">請出示您的通行證</h3>
+                        <p className="text-red-200/70 text-sm">此酒館需要 Gemini API Key 才能運作。</p>
+                        <input 
+                            type="password" 
+                            value={input}
+                            onChange={(e) => setInput(e.target.value)}
+                            placeholder="貼上您的 API Key (AIzaSy...)"
+                            className="w-full bg-black/40 border border-amber-900/50 rounded-lg p-3 text-amber-100 focus:outline-none focus:border-amber-500"
+                        />
+                        <button 
+                            onClick={handleConfirm}
+                            disabled={input.length < 10}
+                            className="w-full py-3 bg-gradient-to-r from-red-900 to-red-800 text-amber-100 rounded-lg hover:brightness-110 disabled:opacity-50"
+                        >
+                            進入酒館 Enter
+                        </button>
+                        <p className="text-xs text-gray-500 mt-4">
+                            輸入後系統將自動記憶 (LocalStorage)，下次無需再次輸入。<br/>
+                            Key 僅儲存在您的瀏覽器端，絕不上傳。
+                        </p>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- 主程式 (App) ---
+
+        function App() {
+            // 優先使用 Hardcoded Key -> 其次檢查 LocalStorage -> 最後為空 (觸發 Modal)
+            const [userKey, setUserKey] = useState(() => {
+                if (HARDCODED_KEY) return HARDCODED_KEY;
+                return localStorage.getItem('gemini_api_key') || "";
+            });
+
+            const [mood, setMood] = useState('');
+            const [status, setStatus] = useState('idle'); // idle, analyzing, mixing, served, error
+            const [recipe, setRecipe] = useState(null);
+            const [imageUrl, setImageUrl] = useState(null);
+            const [errorMsg, setErrorMsg] = useState('');
+            const audioPlayerRef = useRef(null);
+
+            // 更新 Key 並寫入 LocalStorage
+            const handleSetKey = (key) => {
+                localStorage.setItem('gemini_api_key', key);
+                setUserKey(key);
+            };
+
+            // 清除 Key
+            const handleClearKey = () => {
+                if (confirm("確定要登出並清除記憶的 API Key 嗎？")) {
+                    localStorage.removeItem('gemini_api_key');
+                    setUserKey("");
+                    window.location.reload();
+                }
+            };
+
+            const handleSubmit = async () => {
+                if (!mood.trim()) return;
+                
+                if (!userKey) {
+                    setErrorMsg("請先設定 API Key");
+                    return;
+                }
+
+                if (audioPlayerRef.current) audioPlayerRef.current.playMusic();
+                setStatus('analyzing');
+                setErrorMsg('');
+
+                try {
+                    const recipeData = await generateCocktailRecipe(userKey, mood);
+                    setRecipe(recipeData);
+                    setStatus('mixing');
+                    const img = await generateCocktailImage(userKey, recipeData.visualPrompt);
+                    setImageUrl(img);
+                    setStatus('served');
+                } catch (err) {
+                    console.error(err);
+                    setStatus('error');
+                    let msg = err.message || "系統發生未知錯誤";
+                    if (msg.includes("429")) {
+                        msg = "目前訪客眾多 (API 限流)，請稍等 30 秒後再試。";
+                    } else if (msg.includes("API_KEY") || msg.includes("403")) {
+                         msg = "API Key 無效或過期，請重設您的 Key。";
+                         // 若 Key 無效，建議自動清空讓使用者重填，這裡先不強制，讓使用者手動重設
+                    }
+                    setErrorMsg(msg);
+                }
+            };
+
+            const handleReset = () => {
+                setMood('');
+                setStatus('idle');
+                setRecipe(null);
+                setImageUrl(null);
+            };
+
+            return (
+                <div className="min-h-screen w-full bg-gradient-to-br from-red-950 via-slate-900 to-black text-white overflow-x-hidden">
+                    {/* 背景特效 */}
+                    <div className="fixed inset-0 pointer-events-none overflow-hidden">
+                        <div className="absolute top-0 left-1/4 w-96 h-96 bg-red-600/10 rounded-full blur-3xl"></div>
+                        <div className="absolute bottom-0 right-1/4 w-[500px] h-[500px] bg-amber-600/5 rounded-full blur-3xl"></div>
+                         <div className="absolute inset-0 opacity-[0.03]" style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='1'/%3E%3C/svg%3E")` }}></div>
+                    </div>
+
+                    {!userKey && <KeyInputModal onSave={handleSetKey} />}
+
+                    <AudioPlayer ref={audioPlayerRef} />
+
+                    <main className="relative container mx-auto px-4 py-12 min-h-screen flex flex-col items-center justify-center">
+                        {status !== 'served' && (
+                            <header className="text-center mb-12 space-y-4 animate-float">
+                                <h1 className="text-4xl md:text-6xl font-serif text-transparent bg-clip-text bg-gradient-to-r from-amber-200 via-amber-400 to-amber-200 drop-shadow-[0_0_15px_rgba(251,191,36,0.4)]">春節心情小酒館</h1>
+                                <p className="text-red-200/60 font-light tracking-widest text-sm md:text-base">LUNAR NEW YEAR MOOD BISTRO</p>
+                            </header>
+                        )}
+
+                        {status === 'idle' && (
+                            <div className="w-full max-w-2xl animate-fade-in-up">
+                                <div className="glass-panel p-8 md:p-12 rounded-2xl shadow-2xl shadow-red-900/20 text-center">
+                                    <p className="text-amber-100/80 mb-8 font-serif text-lg leading-relaxed">今晚，這座城市依然喧囂，但這裡很安靜。<br/>寫下你的心情，無論是喜悅、疲憊、期待還是惆悵。</p>
+                                    <div className="relative group">
+                                        <textarea value={mood} onChange={(e) => setMood(e.target.value)} placeholder="今晚的心情是..." className="w-full h-40 bg-black/20 border border-amber-900/30 rounded-xl p-4 text-amber-100 placeholder-red-200/20 focus:outline-none focus:border-amber-500/50 transition-all resize-none text-lg font-light" />
+                                    </div>
+                                    <button onClick={handleSubmit} disabled={!mood.trim()} className="mt-8 px-10 py-4 bg-gradient-to-r from-red-900 to-red-800 border border-red-700/50 text-amber-100 rounded-full font-serif text-lg hover:scale-105 transition-all shadow-[0_0_20px_rgba(153,27,27,0.3)]">請給我一杯 Please</button>
+                                </div>
+                            </div>
+                        )}
+
+                        {(status === 'analyzing' || status === 'mixing') && <LoadingScreen status={status} />}
+
+                        {status === 'error' && (
+                            <div className="glass-panel p-8 rounded-xl text-center max-w-md border-red-500/30">
+                                <div className="text-4xl mb-4">🥀</div>
+                                <p className="text-red-200 mb-6 font-mono text-sm">{errorMsg}</p>
+                                <button onClick={handleReset} className="px-6 py-2 border border-amber-500/30 text-amber-200 rounded-full hover:bg-amber-900/20">再試一次</button>
+                            </div>
+                        )}
+
+                        {status === 'served' && recipe && imageUrl && <ResultCard recipe={recipe} imageUrl={imageUrl} onReset={handleReset} />}
+                        
+                        <footer className="absolute bottom-4 text-center w-full text-red-900/40 text-xs space-y-2">
+                             <p>© 2025 Spring Festival Bistro. Powered by Gemini.</p>
+                             {/* 僅在非 Hardcoded 模式下顯示清除按鈕 */}
+                             {!HARDCODED_KEY && userKey && (
+                                 <button onClick={handleClearKey} className="text-amber-500/50 hover:text-amber-400 underline decoration-dotted">
+                                     [ 重設 API Key ]
+                                 </button>
+                             )}
+                        </footer>
+                    </main>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
